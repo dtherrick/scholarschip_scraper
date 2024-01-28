@@ -4,8 +4,7 @@ from bs4 import BeautifulSoup
 from itertools import chain
 import csv
 import re
-import json
-from pprint import pprint as ppr
+import time
 from pathlib import Path
 
 """ TODO
@@ -26,33 +25,45 @@ class ScholarshipScraper:
         self.data = []
 
     def scrape_table(self, headers_selector, payload=None):
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.2210.144"
-        }
-        params = urllib.parse.urlencode(payload, quote_via=urllib.parse.quote)
-        response = requests.get(self.url, params=params, headers=headers)
-
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            table = soup.find_all("table", {"class": "cos-table-detail"})[0]
-
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.2210.144"
+            }
+            params = urllib.parse.urlencode(payload, quote_via=urllib.parse.quote)
+            response = requests.get(self.url, params=params, headers=headers)
             table_data = {}
-            table_data["scholarshipId"] = payload["scholarshipId"]
-            theaders = [
-                header.text.strip() for header in table.select(headers_selector)
-            ]
-            table_data["ScholarshipName"] = theaders[0]
-            rows = table.select(
-                "tbody tr"
-            )  # Adjust this selector based on your HTML structure
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
 
-            for row in rows:
-                columns = row.select(
-                    "td"
+                table = soup.find_all("table", {"class": "cos-table-detail"})[0]
+                table_data["scholarshipId"] = payload["scholarshipId"]
+                theaders = [
+                    header.text.strip() for header in table.select(headers_selector)
+                ]
+                table_data["ScholarshipName"] = theaders[0]
+                rows = table.select(
+                    "tbody tr"
                 )  # Adjust this selector based on your HTML structure
-                table_data[columns[0].text.strip()] = columns[1].text.strip()
 
+                for row in rows:
+                    columns = row.select(
+                        "td"
+                    )  # Adjust this selector based on your HTML structure
+                    if columns[0].text.strip() == "Organization":
+                        cell_data = columns[1].find_all("div")
+                        table_data[columns[0].text.strip()] = cell_data[0].text.strip()
+                        table_data["Address"] = cell_data[1].get_text(separator=", ")
+                    else:
+                        table_data[columns[0].text.strip()] = columns[1].text.strip()
+            else:
+                print(f"SID {payload['scholarshipId']} :: Bad Response: {response.status_code}")
+                table_data["scholarshipId"] = payload["scholarshipId"]
+                table_data["responseCode"] = response.status_code
+            self.data.append(table_data)
+        except Exception as e:
+            table_data["scholarshipId"] = payload["scholarshipId"]
+            table_data["Error Type"] = type(e).__name__
+            table_data["Error Message"] = str(e)
             self.data.append(table_data)
 
     def save_to_csv(self, filename):
@@ -95,8 +106,8 @@ class ScholarshipScraper:
 # Example usage with parameters:
 
 datadir = "~/Data/scholarships"
-infile_csv = f"{datadir}/testIDs.csv"
-outfile_csv = f"{datadir}/scholarshipInfo.csv"
+infile_csv = f"{datadir}/http202Ids.csv"
+outfile_csv = f"{datadir}/scholarshipInfo_202s.csv"
 
 infile_str = Path(infile_csv).expanduser().as_posix()
 outfile_str = Path(outfile_csv).expanduser().as_posix()
@@ -110,9 +121,11 @@ url_to_scrape = (
 scraper = ScholarshipScraper(url_to_scrape)
 infile = open(infile_str, "r")
 scholarship_ids = [id[0] for id in csv.reader(infile)]
-for sch_id in scholarship_ids:
-    print(f"starting: {sch_id}")
-    params = {"scholarshipId": sch_id}  # Add your parameters
-    scraper.scrape_table("thead tr th", params)  # Adjust selectors accordingly
+for index, sch_id in enumerate(scholarship_ids):
+    if index != 0:
+        print(f"starting {index} :: {sch_id}")
+        params = {"scholarshipId": sch_id}  # Add your parameters
+        scraper.scrape_table("thead tr th", params)  # Adjust selectors accordingly
+        # time.sleep(2)  # 2-second delay so we don't hammer the server and get bounced
 result = scraper.get_data()
 scraper.save_to_csv(outfile_str)  # Adjust the path as needed
